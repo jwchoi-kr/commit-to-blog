@@ -140,6 +140,36 @@ function toBranchDTO(b: RawBranch): BranchDTO {
   };
 }
 
+export type CommitDiffDTO = {
+  sha: string;
+  message: string;
+  files: Array<{ filename: string; status: string; patch: string | null }>;
+};
+
+export async function getCommitDiff({
+  userId,
+  owner,
+  repo,
+  sha,
+}: {
+  userId: string;
+  owner: string;
+  repo: string;
+  sha: string;
+}): Promise<CommitDiffDTO> {
+  const octokit = await getOctokitForUser(userId);
+  const { data } = await octokit.rest.repos.getCommit({ owner, repo, ref: sha });
+  return {
+    sha: data.sha,
+    message: data.commit.message,
+    files: (data.files ?? []).map((f) => ({
+      filename: f.filename,
+      status: f.status,
+      patch: f.patch ?? null,
+    })),
+  };
+}
+
 type RawCommit = {
   sha: string;
   html_url: string;
