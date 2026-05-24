@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { GitBranch, GitCommit, Check, Loader2 } from "lucide-react";
 
 import { cn } from "@/app/_lib/utils";
 import { Input } from "@/app/_components/ui/input";
 import { Textarea } from "@/app/_components/ui/textarea";
+import Markdown from "@/app/_components/Markdown";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -124,9 +123,7 @@ export default function Editor({ id, initialTitle, initialContent, meta }: Props
           className="min-h-[60vh] flex-1 resize-none font-mono text-sm leading-relaxed"
         />
       ) : (
-        <div className="prose prose-sm dark:prose-invert min-h-[60vh] max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-        </div>
+        <Markdown className="prose-sm min-h-[60vh]">{content}</Markdown>
       )}
     </div>
   );
