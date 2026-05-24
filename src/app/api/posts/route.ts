@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { requireUserId, withRouteHandler } from "@/app/_lib/api";
+import { parseQuery, requireUserId, withRouteHandler } from "@/app/_lib/api";
 import { prisma } from "@/app/_lib/prisma";
 
 const createBodySchema = z.object({
@@ -13,6 +13,28 @@ const createBodySchema = z.object({
   aiModel: z.string().optional(),
   promptTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
+});
+
+const listQuerySchema = z.object({
+  status: z.enum(["DRAFT", "PUBLISHED"]).default("DRAFT"),
+});
+
+export const GET = withRouteHandler(async (req) => {
+  const userId = await requireUserId();
+  const { status } = parseQuery(req, listQuerySchema);
+  const posts = await prisma.post.findMany({
+    where: { authorId: userId, status },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      excerpt: true,
+      repoFullName: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
+  return Response.json(posts);
 });
 
 export const POST = withRouteHandler(async (req) => {
