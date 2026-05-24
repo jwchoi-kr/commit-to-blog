@@ -3,6 +3,7 @@
 import { useReducer } from "react";
 
 import { SearchableCombobox } from "@/app/_components/SearchableCombobox";
+import { Button } from "@/app/_components/ui/button";
 import {
   fetchBranches,
   fetchCommits,
@@ -14,6 +15,7 @@ import {
 } from "@/app/_lib/github-client";
 
 import { createFlowReducer, initialState } from "./createFlow.reducer";
+import { DraftPanel } from "./DraftPanel";
 import { StepCard } from "./StepCard";
 
 function toErrorMessage(fallback: string) {
@@ -25,106 +27,186 @@ export function CreateFlow() {
   const [state, dispatch] = useReducer(createFlowReducer, initialState);
   const [owner, repo] = state.repo ? state.repo.fullName.split("/") : [null, null];
 
-  return (
-    <div className="flex flex-col gap-4">
-      <StepCard step={1} title="Repository" description="Pick a repository to summarize.">
-        <SearchableCombobox<Repo>
-          cacheKey="repos"
-          loadItems={(q, signal) => fetchRepos(q || undefined, signal)}
-          getKey={(r) => String(r.id)}
-          renderItem={(r) => (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium">{r.fullName}</span>
-              {r.description && (
-                <span className="text-muted-foreground line-clamp-1 text-xs">{r.description}</span>
-              )}
-            </div>
-          )}
-          triggerLabel={
-            state.repo ? (
-              state.repo.fullName
-            ) : (
-              <span className="text-muted-foreground">Select a repository…</span>
-            )
-          }
-          searchPlaceholder="Search repositories…"
-          emptyMessage="No repositories found."
-          selectedKey={state.repo ? String(state.repo.id) : null}
-          onSelect={(r) => dispatch({ type: "SELECT_REPO", repo: r })}
-          toErrorMessage={toErrorMessage("Failed to load repositories")}
-        />
-      </StepCard>
+  async function handleGenerate() {
+    if (!state.repo || state.selectedShas.length === 0) return;
+    dispatch({ type: "GENERATE_START" });
+    try {
+      const res = await fetch("/api/ai/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repoFullName: state.repo.fullName, shas: state.selectedShas }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? `요청 실패 (${res.status})`);
+      }
+      const aiModel = res.headers.get("X-AI-Model") ?? "gpt-4o-mini";
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        dispatch({ type: "STREAM_CHUNK", delta: decoder.decode(value, { stream: true }) });
+      }
+      dispatch({ type: "GENERATE_SUCCESS", aiModel });
+    } catch (err) {
+      dispatch({
+        type: "GENERATE_ERROR",
+        message: err instanceof Error ? err.message : "알 수 없는 오류",
+      });
+    }
+  }
 
-      {state.repo && owner && repo && (
-        <StepCard step={2} title="Branch" description={state.repo.fullName}>
-          <SearchableCombobox<Branch>
-            cacheKey={`branches-${owner}-${repo}`}
-            filter="local"
-            loadItems={(_q, signal) => fetchBranches(owner, repo, signal)}
-            getKey={(b) => b.name}
-            getSearchText={(b) => b.name}
-            renderItem={(b) => <span className="text-sm">{b.name}</span>}
+  async function handleSave() {
+    if (!state.draft || !state.repo || !state.branch) return;
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: state.draft.title,
+          contentMd: state.draft.contentMd,
+          excerpt: state.draft.excerpt,
+          repoFullName: state.repo.fullName,
+          branch: state.branch.name,
+          commitShas: state.selectedShas,
+          aiModel: state.draft.aiModel,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? `저장 실패 (${res.status})`);
+      }
+      const post = (await res.json()) as { id: string };
+      dispatch({ type: "SAVE_SUCCESS", postId: post.id });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.");
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,420px)_1fr]">
+      <section aria-label="Create flow" className="flex flex-col gap-4">
+        <StepCard step={1} title="Repository" description="Pick a repository to summarize.">
+          <SearchableCombobox<Repo>
+            cacheKey="repos"
+            loadItems={(q, signal) => fetchRepos(q || undefined, signal)}
+            getKey={(r) => String(r.id)}
+            renderItem={(r) => (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium">{r.fullName}</span>
+                {r.description && (
+                  <span className="text-muted-foreground line-clamp-1 text-xs">
+                    {r.description}
+                  </span>
+                )}
+              </div>
+            )}
             triggerLabel={
-              state.branch ? (
-                state.branch.name
+              state.repo ? (
+                state.repo.fullName
               ) : (
-                <span className="text-muted-foreground">Select a branch…</span>
+                <span className="text-muted-foreground">Select a repository…</span>
               )
             }
-            searchPlaceholder="Search branches…"
-            emptyMessage="No branches found."
-            selectedKey={state.branch?.name ?? null}
-            onSelect={(b) => dispatch({ type: "SELECT_BRANCH", branch: b })}
-            toErrorMessage={toErrorMessage("Failed to load branches")}
+            searchPlaceholder="Search repositories…"
+            emptyMessage="No repositories found."
+            selectedKey={state.repo ? String(state.repo.id) : null}
+            onSelect={(r) => dispatch({ type: "SELECT_REPO", repo: r })}
+            toErrorMessage={toErrorMessage("Failed to load repositories")}
           />
         </StepCard>
-      )}
 
-      {state.repo &&
-        state.branch &&
-        owner &&
-        repo &&
-        (() => {
-          const branchName = state.branch.name;
-          return (
-            <StepCard
-              step={3}
-              title="Commits"
-              description={`${state.selectedShas.length} selected on ${branchName}`}
+        {state.repo && owner && repo && (
+          <StepCard step={2} title="Branch" description={state.repo.fullName}>
+            <SearchableCombobox<Branch>
+              cacheKey={`branches-${owner}-${repo}`}
+              filter="local"
+              loadItems={(_q, signal) => fetchBranches(owner, repo, signal)}
+              getKey={(b) => b.name}
+              getSearchText={(b) => b.name}
+              renderItem={(b) => <span className="text-sm">{b.name}</span>}
+              triggerLabel={
+                state.branch ? (
+                  state.branch.name
+                ) : (
+                  <span className="text-muted-foreground">Select a branch…</span>
+                )
+              }
+              searchPlaceholder="Search branches…"
+              emptyMessage="No branches found."
+              selectedKey={state.branch?.name ?? null}
+              onSelect={(b) => dispatch({ type: "SELECT_BRANCH", branch: b })}
+              toErrorMessage={toErrorMessage("Failed to load branches")}
+            />
+          </StepCard>
+        )}
+
+        {state.repo &&
+          state.branch &&
+          owner &&
+          repo &&
+          (() => {
+            const branchName = state.branch.name;
+            return (
+              <StepCard
+                step={3}
+                title="Commits"
+                description={`${state.selectedShas.length} selected on ${branchName}`}
+              >
+                <SearchableCombobox<Commit>
+                  mode="multiple"
+                  cacheKey={`commits-${owner}-${repo}-${branchName}`}
+                  filter="local"
+                  loadItems={(_q, signal) => fetchCommits(owner, repo, branchName, signal)}
+                  getKey={(c) => c.sha}
+                  getSearchText={(c) => `${c.message} ${c.sha} ${c.authorLogin ?? ""}`}
+                  renderItem={(c) => (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="line-clamp-1 text-sm font-medium">{c.message}</span>
+                      <span className="text-muted-foreground text-xs">
+                        {c.sha.slice(0, 7)}
+                        {c.authorLogin ? ` · ${c.authorLogin}` : ""}
+                        {c.date ? ` · ${formatDate(c.date)}` : ""}
+                      </span>
+                    </div>
+                  )}
+                  triggerLabel={
+                    state.selectedShas.length === 0 ? (
+                      <span className="text-muted-foreground">Select commits…</span>
+                    ) : (
+                      `${state.selectedShas.length} commit${state.selectedShas.length === 1 ? "" : "s"} selected`
+                    )
+                  }
+                  searchPlaceholder="Search commits by message or SHA…"
+                  emptyMessage="No commits match."
+                  selectedKeys={state.selectedShas}
+                  onToggle={(c) => dispatch({ type: "TOGGLE_COMMIT", sha: c.sha })}
+                  toErrorMessage={toErrorMessage("Failed to load commits")}
+                />
+              </StepCard>
+            );
+          })()}
+
+        {state.selectedShas.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Button
+              onClick={handleGenerate}
+              disabled={state.generating}
+              className="w-full sm:w-auto"
             >
-              <SearchableCombobox<Commit>
-                mode="multiple"
-                cacheKey={`commits-${owner}-${repo}-${branchName}`}
-                filter="local"
-                loadItems={(_q, signal) => fetchCommits(owner, repo, branchName, signal)}
-                getKey={(c) => c.sha}
-                getSearchText={(c) => `${c.message} ${c.sha} ${c.authorLogin ?? ""}`}
-                renderItem={(c) => (
-                  <div className="flex flex-col gap-0.5">
-                    <span className="line-clamp-1 text-sm font-medium">{c.message}</span>
-                    <span className="text-muted-foreground text-xs">
-                      {c.sha.slice(0, 7)}
-                      {c.authorLogin ? ` · ${c.authorLogin}` : ""}
-                      {c.date ? ` · ${formatDate(c.date)}` : ""}
-                    </span>
-                  </div>
-                )}
-                triggerLabel={
-                  state.selectedShas.length === 0 ? (
-                    <span className="text-muted-foreground">Select commits…</span>
-                  ) : (
-                    `${state.selectedShas.length} commit${state.selectedShas.length === 1 ? "" : "s"} selected`
-                  )
-                }
-                searchPlaceholder="Search commits by message or SHA…"
-                emptyMessage="No commits match."
-                selectedKeys={state.selectedShas}
-                onToggle={(c) => dispatch({ type: "TOGGLE_COMMIT", sha: c.sha })}
-                toErrorMessage={toErrorMessage("Failed to load commits")}
-              />
-            </StepCard>
-          );
-        })()}
+              {state.generating ? "초안 생성 중…" : "블로그 초안 생성"}
+            </Button>
+            {state.generateError && (
+              <p className="text-destructive text-sm">{state.generateError}</p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section aria-label="Draft preview">
+        <DraftPanel state={state} dispatch={dispatch} onSave={handleSave} />
+      </section>
     </div>
   );
 }
