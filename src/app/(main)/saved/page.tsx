@@ -17,6 +17,7 @@ export default async function SavedPostsPage() {
       excerpt: true,
       repoFullName: true,
       status: true,
+      slug: true,
       updatedAt: true,
     },
   });
@@ -38,6 +39,7 @@ export default async function SavedPostsPage() {
               excerpt={post.excerpt ?? null}
               repoFullName={post.repoFullName}
               status={post.status}
+              slug={post.slug ?? null}
               updatedAt={post.updatedAt.toISOString()}
             />
           ))}
