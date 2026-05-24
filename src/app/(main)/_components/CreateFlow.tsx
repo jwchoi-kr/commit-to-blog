@@ -13,7 +13,9 @@ import {
   type Commit,
   type Repo,
 } from "@/app/_lib/github-client";
+import { savePost } from "@/app/_lib/posts-client";
 
+import { useGenerateDraft } from "../_hooks/useGenerateDraft";
 import { createFlowReducer, initialState } from "./createFlow.reducer";
 import { DraftPanel } from "./DraftPanel";
 import { StepCard } from "./StepCard";
@@ -26,58 +28,25 @@ function toErrorMessage(fallback: string) {
 export function CreateFlow() {
   const [state, dispatch] = useReducer(createFlowReducer, initialState);
   const [owner, repo] = state.repo ? state.repo.fullName.split("/") : [null, null];
+  const generateDraft = useGenerateDraft(dispatch);
 
   async function handleGenerate() {
     if (!state.repo || state.selectedShas.length === 0) return;
-    dispatch({ type: "GENERATE_START" });
-    try {
-      const res = await fetch("/api/ai/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoFullName: state.repo.fullName, shas: state.selectedShas }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? `요청 실패 (${res.status})`);
-      }
-      const aiModel = res.headers.get("X-AI-Model") ?? "gpt-4o-mini";
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        dispatch({ type: "STREAM_CHUNK", delta: decoder.decode(value, { stream: true }) });
-      }
-      dispatch({ type: "GENERATE_SUCCESS", aiModel });
-    } catch (err) {
-      dispatch({
-        type: "GENERATE_ERROR",
-        message: err instanceof Error ? err.message : "알 수 없는 오류",
-      });
-    }
+    await generateDraft(state.repo.fullName, state.selectedShas);
   }
 
   async function handleSave() {
     if (!state.draft || !state.repo || !state.branch) return;
     try {
-      const res = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: state.draft.title,
-          contentMd: state.draft.contentMd,
-          excerpt: state.draft.excerpt,
-          repoFullName: state.repo.fullName,
-          branch: state.branch.name,
-          commitShas: state.selectedShas,
-          aiModel: state.draft.aiModel,
-        }),
+      const post = await savePost({
+        title: state.draft.title,
+        contentMd: state.draft.contentMd,
+        excerpt: state.draft.excerpt,
+        repoFullName: state.repo.fullName,
+        branch: state.branch.name,
+        commitShas: state.selectedShas,
+        aiModel: state.draft.aiModel,
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? `저장 실패 (${res.status})`);
-      }
-      const post = (await res.json()) as { id: string };
       dispatch({ type: "SAVE_SUCCESS", postId: post.id });
     } catch (err) {
       alert(err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.");
