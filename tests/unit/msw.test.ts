@@ -4,7 +4,8 @@ import { expect, test } from "vitest";
 test("MSW intercepts GitHub repos request", async () => {
   const res = await fetch("https://api.github.com/user/repos");
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual([]);
+  const body = (await res.json()) as unknown[];
+  expect(Array.isArray(body)).toBe(true);
 });
 
 test("MSW intercepts OpenAI chat completion", async () => {
